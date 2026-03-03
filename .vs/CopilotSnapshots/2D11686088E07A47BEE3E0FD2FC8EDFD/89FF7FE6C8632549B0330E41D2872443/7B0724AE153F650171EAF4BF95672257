@@ -1,0 +1,143 @@
+﻿#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+避難收容處所點位資料經緯度勘誤與核實
+針對台灣本島範圍進行經緯度驗證及電話格式驗證
+"""
+
+import pandas as pd
+import os
+import re
+
+# 定義台灣本島的經緯度範圍（WGS84）
+TAIWAN_MAINLAND_LON_MIN = 120.0
+TAIWAN_MAINLAND_LON_MAX = 122.0
+TAIWAN_MAINLAND_LAT_MIN = 21.8
+TAIWAN_MAINLAND_LAT_MAX = 25.5
+
+# 定義台灣本島的電話區碼（排除離島）
+# 排除: 082(金門), 0826(金門), 0836(馬祖), 089-9(綠島蘭嶼)
+TAIWAN_MAINLAND_AREA_CODES = ['02', '03', '04', '05', '06', '07', '08', '09']
+OFFSHORE_AREA_CODES = ['082', '0826', '0836']
+
+def is_valid_taiwan_phone(phone):
+    """
+    驗證電話號碼是否符合台灣本島格式
+
+    參數：
+        phone: 電話號碼字串
+
+    回傳：
+        True: 符合台灣本島電話格式
+        False: 不符合（空值、離島區碼、或無效格式）
+    """
+    if pd.isna(phone) or str(phone).strip() == '':
+        return False
+
+    phone_str = str(phone).strip()
+
+    # 移除常見的分隔符號和擴展符號，保留數字和開頭的 0
+    # 保留原始字串用於區碼檢查
+    phone_clean = re.sub(r'[-\s()（）#＃extEXT.轉*].*$', '', phone_str)
+
+    # 檢查是否包含離島區碼
+    for offshore_code in OFFSHORE_AREA_CODES:
+        if phone_str.startswith(offshore_code) or phone_clean.startswith(offshore_code):
+            return False
+
+    # 檢查是否以台灣本島區碼開頭
+    # 手機：09開頭
+    # 市話：02-08開頭（排除082, 0826）
+    if phone_clean.startswith('09'):
+        # 手機號碼應該是10碼
+        digits = re.sub(r'\D', '', phone_str)
+        return len(digits) == 10 and digits.startswith('09')
+    elif phone_clean.startswith(('02', '03', '04', '05', '06', '07', '08')):
+        # 市話格式，至少要有區碼+號碼
+        digits = re.sub(r'\D', '', phone_str.split('#')[0].split('ext')[0].split('轉')[0])
+        return len(digits) >= 8  # 最短的市話號碼格式
+    elif phone_clean[0].isdigit() and not phone_clean.startswith('0'):
+        # 沒有區碼的號碼，可能是簡寫或內線，先判定為無效
+        return False
+    else:
+        # 其他格式視為無效
+        return False
+
+def validate_coordinates(df):
+    """
+    驗證經緯度是否符合台灣本島範圍
+
+    參數：
+        df: 包含經緯度欄位的 DataFrame
+
+    回傳：
+        valid_df: 符合台灣本島範圍的資料
+        invalid_df: 不符合範圍的資料
+    """
+    # 建立驗證條件
+    valid_lon = (df['經度'] > TAIWAN_MAINLAND_LON_MIN) & (df['經度'] < TAIWAN_MAINLAND_LON_MAX)
+    valid_lat = (df['緯度'] > TAIWAN_MAINLAND_LAT_MIN) & (df['緯度'] < TAIWAN_MAINLAND_LAT_MAX)
+    valid_condition = valid_lon & valid_lat
+
+    # 分離符合與不符合的資料
+    valid_df = df[valid_condition].copy()
+    invalid_df = df[~valid_condition].copy()
+
+    return valid_df, invalid_df
+
+def validate_phone_numbers(df):
+    """
+    驗證電話號碼是否符合台灣本島格式
+
+    參數：
+        df: 包含管理人電話欄位的 DataFrame
+
+    回傳：
+        valid_df: 符合台灣本島電話格式的資料
+        invalid_df: 不符合格式的資料
+    """
+    # 套用電話驗證函數
+    valid_phone = df['管理人電話'].apply(is_valid_taiwan_phone)
+
+    # 分離符合與不符合的資料
+    valid_df = df[valid_phone].copy()
+    invalid_df = df[~valid_phone].copy()
+
+    return valid_df, invalid_df
+
+def main():
+    # 設定檔案路徑
+    input_file = 'data/避難收容處所點位檔案v9.csv'
+    output_valid = 'outputs/避難收容處所_台灣本島有效資料.csv'
+    output_invalid = 'outputs/避難收容處所_剔除資料.csv'
+    
+    # 讀取資料
+    print(f'讀取資料檔案: {input_file}')
+    df = pd.read_csv(input_file, encoding='utf-8-sig')
+    
+    print(f'總資料筆數: {len(df)}')
+    print(f'\n台灣本島範圍定義:')
+    print(f'  經度: {TAIWAN_MAINLAND_LON_MIN} < 經度 < {TAIWAN_MAINLAND_LON_MAX}')
+    print(f'  緯度: {TAIWAN_MAINLAND_LAT_MIN} < 緯度 < {TAIWAN_MAINLAND_LAT_MAX}')
+    
+    # 執行驗證
+    valid_df, invalid_df = validate_coordinates(df)
+    
+    print(f'\n驗證結果:')
+    print(f'  符合台灣本島範圍: {len(valid_df)} 筆')
+    print(f'  不符合範圍（剔除）: {len(invalid_df)} 筆')
+    
+    # 輸出結果
+    valid_df.to_csv(output_valid, index=False, encoding='utf-8-sig')
+    print(f'\n✓ 有效資料已輸出至: {output_valid}')
+    
+    invalid_df.to_csv(output_invalid, index=False, encoding='utf-8-sig')
+    print(f'✓ 剔除資料已輸出至: {output_invalid}')
+    
+    # 顯示被剔除資料的摘要
+    if len(invalid_df) > 0:
+        print(f'\n被剔除資料摘要:')
+        print(invalid_df[['序號', '縣市及鄉鎮市區', '避難收容處所名稱', '經度', '緯度']].to_string(index=False))
+
+if __name__ == '__main__':
+    main()

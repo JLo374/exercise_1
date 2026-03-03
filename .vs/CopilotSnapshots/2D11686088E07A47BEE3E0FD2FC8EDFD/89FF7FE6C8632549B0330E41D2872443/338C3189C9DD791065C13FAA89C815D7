@@ -1,0 +1,80 @@
+﻿#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+避難收容處所點位資料經緯度勘誤與核實
+針對台灣本島範圍進行經緯度驗證及電話格式驗證
+"""
+
+import pandas as pd
+import os
+import re
+
+# 定義台灣本島的經緯度範圍（WGS84）
+TAIWAN_MAINLAND_LON_MIN = 120.0
+TAIWAN_MAINLAND_LON_MAX = 122.0
+TAIWAN_MAINLAND_LAT_MIN = 21.8
+TAIWAN_MAINLAND_LAT_MAX = 25.5
+
+# 定義台灣本島的電話區碼（排除離島）
+# 排除: 082(金門), 0826(金門), 0836(馬祖), 089-9(綠島蘭嶼)
+TAIWAN_MAINLAND_AREA_CODES = ['02', '03', '04', '05', '06', '07', '08', '09']
+OFFSHORE_AREA_CODES = ['082', '0826', '0836']
+
+def validate_coordinates(df):
+    """
+    驗證經緯度是否符合台灣本島範圍
+    
+    參數：
+        df: 包含經緯度欄位的 DataFrame
+    
+    回傳：
+        valid_df: 符合台灣本島範圍的資料
+        invalid_df: 不符合範圍的資料
+    """
+    # 建立驗證條件
+    valid_lon = (df['經度'] > TAIWAN_MAINLAND_LON_MIN) & (df['經度'] < TAIWAN_MAINLAND_LON_MAX)
+    valid_lat = (df['緯度'] > TAIWAN_MAINLAND_LAT_MIN) & (df['緯度'] < TAIWAN_MAINLAND_LAT_MAX)
+    valid_condition = valid_lon & valid_lat
+    
+    # 分離符合與不符合的資料
+    valid_df = df[valid_condition].copy()
+    invalid_df = df[~valid_condition].copy()
+    
+    return valid_df, invalid_df
+
+def main():
+    # 設定檔案路徑
+    input_file = 'data/避難收容處所點位檔案v9.csv'
+    output_valid = 'outputs/避難收容處所_台灣本島有效資料.csv'
+    output_invalid = 'outputs/避難收容處所_剔除資料.csv'
+    
+    # 讀取資料
+    print(f'讀取資料檔案: {input_file}')
+    df = pd.read_csv(input_file, encoding='utf-8-sig')
+    
+    print(f'總資料筆數: {len(df)}')
+    print(f'\n台灣本島範圍定義:')
+    print(f'  經度: {TAIWAN_MAINLAND_LON_MIN} < 經度 < {TAIWAN_MAINLAND_LON_MAX}')
+    print(f'  緯度: {TAIWAN_MAINLAND_LAT_MIN} < 緯度 < {TAIWAN_MAINLAND_LAT_MAX}')
+    
+    # 執行驗證
+    valid_df, invalid_df = validate_coordinates(df)
+    
+    print(f'\n驗證結果:')
+    print(f'  符合台灣本島範圍: {len(valid_df)} 筆')
+    print(f'  不符合範圍（剔除）: {len(invalid_df)} 筆')
+    
+    # 輸出結果
+    valid_df.to_csv(output_valid, index=False, encoding='utf-8-sig')
+    print(f'\n✓ 有效資料已輸出至: {output_valid}')
+    
+    invalid_df.to_csv(output_invalid, index=False, encoding='utf-8-sig')
+    print(f'✓ 剔除資料已輸出至: {output_invalid}')
+    
+    # 顯示被剔除資料的摘要
+    if len(invalid_df) > 0:
+        print(f'\n被剔除資料摘要:')
+        print(invalid_df[['序號', '縣市及鄉鎮市區', '避難收容處所名稱', '經度', '緯度']].to_string(index=False))
+
+if __name__ == '__main__':
+    main()
